@@ -1,0 +1,245 @@
+import xlwings as xw
+from os import path, remove, listdir, getcwd, _exit
+import re
+import gc
+
+class Hou31xl:
+	
+	# 建構式
+	def __init__(self):
+		self.branch = None
+		self.serve_id = None
+		self.hou_losn = None
+		self.idn = None
+		self.name = None
+		self.detail = None
+		
+	# 方法
+	def listfiles(self, filetype_ = 'txt', nowPath = getcwd(), message = None):
+		files = listdir(nowPath)
+		qualifyFiles = []
+
+		if message != None:
+			print(message)
+		try:
+			for f in files:
+				# 要給完整路徑才能正確讀取
+				allPath = path.join(nowPath, f)
+				if (f[f.find(".")+1:] == filetype_):
+					qualifyFiles.append(f)
+			if len(qualifyFiles) > 0:
+				for compareF,  i in zip(qualifyFiles, range(1, len(qualifyFiles)+1)):
+					print("(%d)%s" %(i,  compareF))
+			else:
+				s = input("【Warning！沒有%s檔案!請將%s檔與執行檔放在同一個資料夾...press enter to exit...】" %(filetype_, filetype_))
+				_exit(0)
+		except:
+			pass
+			
+		return qualifyFiles
+	
+	def readtxt(self, sFilepath, section, branches, serve_areas):
+		branch_pos = -1
+		serve_area_pos = -1
+		hou_losn_pos = -1
+		detail = ''
+		df = []
+		df_row = 0
+		
+		f = open(sFilepath, 'r',  encoding = 'UTF-8',  newline ='')
+		lines = f.readlines()
+		
+		j = -999
+		for line in lines:
+			# 取得鄉鎮名稱
+			branch_pos = line.find('鄉鎮(區)：')
+			if branch_pos > -1:
+				branch = ''	# 重置分處代號
+				branch_ch = line[branch_pos+6:re.search(r'\s', line).span()[0]]
+				#print(branch_ch)
+				for i in range(0, 12):
+					if branch_ch in section[i]:
+						branch = branches[i]
+						#print(branch)
+						break
+					
+				if branch == '':
+					print("【%s查無分處代號】" %branch_ch)
+				
+			# 取得服務區
+			serve_area_pos = line.find('服務區：')
+			if serve_area_pos > -1:
+				serve_id = ''	# 重置服務區id
+				serve_name = line[(serve_area_pos+4):re.search(r'\s', line).span()[0]]
+				#print(serve_area)
+				
+				# 姓名比對服務區代號
+				for server_data in serve_areas:
+					if server_data[1] == serve_name:
+						serve_id = server_data[0]
+						break
+				
+				if serve_id == '':
+					print("【%s查無服務區ID】" %serve_name)
+				
+			# 取得通報日期
+			duration_pos = line.find('通報日期：')
+			if duration_pos > -1:
+				df_duration = line[duration_pos+5:]
+				#print(df_duration)
+				
+				title = '''代碼:  1.通訊地址不一致  2.姓名不一致(如姓名顯示內容皆相同，為戶政中文內碼不相同)  3.身份證字號不一致                                       通報日期：%s
+     稅籍編號     持分人檔IDN           持分人檔姓名                                 持分人檔地址
+代碼              戶政通報檔IDN         戶政通報檔姓名                               戶政通報檔之通訊地址                                                   通報日期
+     電話         電子郵件地址                          出生年月日
+===========================================================================================================================================================================
+'''	 % df_duration
+				
+				end = '說明：身分證字號不一致、或IDN重複者，請再查調戶政資料，確認與房屋稅持分人為同一人，再予更檔。（IDN重複：係指IDN可能與他人相同）'
+				
+			# 取得資料開始前
+			before_start_pos = line.find('===')
+			if before_start_pos > -1:
+				j = 0
+				#print(line)
+
+			if j > 0:
+				if j%3 == 1:
+					try:
+						# 取得房屋稅號
+						hou_losn_pos = re.search(r'\s{5,5}[0-9]*', line).span() 	# 正則表達式 找出稅號
+						if hou_losn_pos[0] > -1:
+							hou_losn = "'"+line[hou_losn_pos[0]+5:hou_losn_pos[1]]
+							#print(hou_losn)
+						detail = ''
+						j = 1
+					except:
+						pass
+
+				# 取得資料明細
+				if 0 < j < 4:
+					detail += line
+					if j == 2:
+						idn_pos = re.search(r'[A-Z]{1}[0-9]*', line).span() 	# 正則表達式 找出稅號
+						if idn_pos[0] > -1:
+							idn = "'"+line[idn_pos[0]:idn_pos[1]]
+					#print("j=", j)
+					if j == 3:
+						df.append([])
+						df[df_row].append(branch)
+						df[df_row].append(serve_id)
+						df[df_row].append(hou_losn)
+						df[df_row].append(idn)
+						df[df_row].append(title+detail+end)
+						df_row += 1
+			j += 1
+
+			if line.find("說明：身分證字號不一致") > -1:
+				j = -999
+		return df, df_row, df_duration
+	
+	def write_excel(self, df):
+		wb = xw.Book()
+		sht = wb.sheets[0] 
+		
+		# 寫入表頭
+		sht.range('A1').value = '承辦機關代號'
+		sht.range('B1').value = '承辦人員ID'	
+		sht.range('C1').value = '房屋稅籍編號'	
+		sht.range('D1').value = '戶政通報IDN'	
+		#sht.range('E1').value = '持分人檔姓名'
+		sht.range('E1').value = '明細資料'
+		
+		# 寫入資料
+		sht.range('A2').expand('table').value = df
+		rng = sht.range('A2').expand('table')
+		sht.autofit('c')
+		
+		# 設定字體大小
+		#rng = sht.range('E2:E100')
+		#rng.api.Font.Size = 8
+		#rng.api.column_width = 80
+
+		# 存檔
+		wb.save('HOU31XL.xlsx')
+		
+		# 關閉EXCEL
+		app = xw.apps.active
+		app.quit()
+		del app
+		gc.collect()	
+		
+	def read_excel(self, fileName):
+		try:
+			wb = xw.Book(fileName)
+			sht = wb.sheets[0]
+			
+			# EXCEL內容存取至記憶體
+			table = sht.range('A2').expand('table').value
+			#table = sht.range(f'a2:a{nrows}').value
+			#print(table)
+			
+			# 計算工作表資料列數
+			rng = sht.range('A2').expand('table') 
+			nrows = rng.rows.count 
+			
+			# 關閉EXCEL
+			app = xw.apps.active
+			app.quit()
+			
+		
+		except FileNotFoundError:
+			s = input("【Warning！找不到%s檔！press enter to continue...】" % fileName)	
+			_exit(0)
+		
+		return table, nrows
+
+	
+def main():
+	# 主程式
+	branches = ['E78', 'E79', 'E80', 'E83', 'E84', 'E85', 'E86', 'E87', 'E88', 'E89', 'E90', 'E91']
+	section = [['苓雅區', '新興區'],
+			   ['前金區', '鹽埕區', '旗津區', '鼓山區'],
+			   ['左營區'],
+			   ['鳳山區'],
+			   ['那瑪夏區', '桃源區', '茂林區', '六龜區', '美濃區', '旗山區', '甲仙區', '內門區', '杉林區'],
+			   ['岡山區', '燕巢區', '梓官區', '永安區', '彌陀區', '橋頭區', '田寮區', '茄萣區', '阿蓮區', '路竹區', '湖內區'], 
+			   ['三民區'],
+			   ['小港區'],
+			   ['前鎮區'],
+			   ['楠梓區'],
+			   ['鳥松區', '大社區', '仁武區', '大樹區'],
+			   ['林園區', '大寮區']
+			  ]
+			  
+	print('注意事項：\n1、服務區檔案名稱須為「服務區.xlsx」\n2、服務區檔案第1欄為員工編號，第2欄為服務區姓名，檔案由第2列開始讀取\n3、請將服務區檔案與執行檔放在同一資料夾\n')			  
+	
+	# 建立物件
+	report = Hou31xl()
+	
+	#選擇檔案
+	files = report.listfiles()
+	file = int(input("請選擇檔案："))
+	filepath = path.join(getcwd(), files[file-1])
+	
+	# 讀取服務區檔
+	serve_areas = report.read_excel('服務區.xlsx')[0]
+		
+	# 取得TXT資料
+	df, read_row, duration = report.readtxt(filepath, section, branches, serve_areas)
+	
+	# 寫入EXCEL
+	report.write_excel(df) 
+	
+	# 檢查資料筆數
+	write_row = report.read_excel('HOU31XL.xlsx')[1]
+	if write_row != read_row:
+		print("【不相符！寫入資料筆數%d筆，讀取資料%d筆，可能承辦機關代號有缺漏】" %(write_row, read_row))
+	else:
+		print(f'【寫入EXCEL完成！共%d筆資料】' %read_row)
+		
+	s = input("press enter to continue...")
+
+	
+if __name__ == '__main__':
+	main()
